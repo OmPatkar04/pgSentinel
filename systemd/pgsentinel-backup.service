@@ -1,0 +1,14 @@
+[Unit]
+Description=pgSentinel Scheduled Base Backup Engine
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=om
+ExecStart=/home/om/pgSentinel/bin/sentinel-backup
+StandardOutput=append:/home/om/pgSentinel/logs/sentinel.log
+StandardError=append:/home/om/pgSentinel/logs/sentinel.log
+
+[Install]
+WantedBy=multi-user.target
