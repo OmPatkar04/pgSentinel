@@ -1,0 +1,11 @@
+# Ignore binary archives and backups
+archive/wal/*
+!archive/wal/.gitkeep
+backups/base/*
+!backups/base/.gitkeep
+
+# Ignore dynamic logs
+logs/*.log
+
+# Ignore local system secrets
+.pgpass
