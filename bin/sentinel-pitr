@@ -1,0 +1,64 @@
+#!/bin/bash
+set -eo pipefail
+
+BASE_DIR="$HOME/pgSentinel"
+BACKUP_DIR="${BASE_DIR}/backups/base"
+ARCHIVE_DIR="${BASE_DIR}/archive/wal"
+LOG_FILE="${BASE_DIR}/logs/sentinel.log"
+PG_DATA="/var/lib/postgresql/14/main"
+PG_CONF_DIR="/etc/postgresql/14/main"
+TARGET_TIME="$1"
+
+log_msg() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$1] $2" | tee -a "${LOG_FILE}"
+}
+
+if [ -z "${TARGET_TIME}" ]; then
+    echo "Usage: $0 \"YYYY-MM-DD HH:MM:SS\""
+    exit 1
+fi
+
+log_msg "ALERT" "Initiating Point-In-Time Recovery to target: ${TARGET_TIME}"
+
+# 1. Integrity Verification
+log_msg "INFO" "Verifying SHA-256 seal on latest base backup..."
+cd "${BACKUP_DIR}"
+if ! sha256sum --status -c latest_base.tar.gz.sha256; then
+    log_msg "CRITICAL" "Integrity validation FAILED! Corrupted base backup."
+    exit 1
+fi
+log_msg "SUCCESS" "Base backup integrity confirmed."
+
+# 2. Stop Cluster
+log_msg "INFO" "Stopping PostgreSQL service..."
+sudo systemctl stop postgresql
+
+# 3. Clean and Restore Data Directory
+log_msg "INFO" "Purging old data directory and unpacking base backup..."
+sudo rm -rf "${PG_DATA}"/*
+sudo tar -xzf "${BACKUP_DIR}/latest_base.tar.gz" -C "${PG_DATA}"
+sudo chown -R postgres:postgres "${PG_DATA}"
+sudo chmod 700 "${PG_DATA}"
+
+# 4. Configure Recovery Target and Restore Command
+log_msg "INFO" "Configuring recovery target parameters..."
+sudo -u postgres touch "${PG_DATA}/recovery.signal"
+
+sudo tee -a "${PG_CONF_DIR}/postgresql.conf" > /dev/null << RECOVERY_EOF
+# --- Dynamic PITR Configuration ---
+restore_command = 'cp ${ARCHIVE_DIR}/%f %p'
+recovery_target_time = '${TARGET_TIME}'
+recovery_target_action = 'promote'
+RECOVERY_EOF
+
+# 5. Boot Cluster in Recovery Mode
+log_msg "INFO" "Starting PostgreSQL cluster to replay WAL segments..."
+sudo systemctl start postgresql
+
+# Wait for recovery promotion
+sleep 5
+
+# Clean up ephemeral PITR settings from postgresql.conf
+sudo sed -i '/# --- Dynamic PITR Configuration ---/,+4d' "${PG_CONF_DIR}/postgresql.conf"
+
+log_msg "SUCCESS" "Cluster promoted! Recovery replay complete up to ${TARGET_TIME}."

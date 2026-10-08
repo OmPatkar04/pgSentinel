@@ -1,0 +1,28 @@
+#!/bin/bash
+set -eo pipefail
+
+BASE_DIR="$HOME/pgSentinel"
+BACKUP_DIR="${BASE_DIR}/backups/base"
+LOG_FILE="${BASE_DIR}/logs/sentinel.log"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+TARGET_FILE="${BACKUP_DIR}/base_${TIMESTAMP}.tar.gz"
+
+log_msg() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$1] $2" | tee -a "${LOG_FILE}"
+}
+
+log_msg "INFO" "Starting physical base backup with pg_basebackup..."
+
+# Take consistent tar-format base backup and compress with gzip
+pg_basebackup -h localhost -p 5432 -U backup_bot -D - -Ft -z -X fetch > "${TARGET_FILE}"
+
+# Generate SHA-256 seal
+cd "${BACKUP_DIR}"
+sha256sum "$(basename "${TARGET_FILE}")" > "$(basename "${TARGET_FILE}").sha256"
+
+# Maintain dynamic pointer
+ln -sf "$(basename "${TARGET_FILE}")" latest_base.tar.gz
+ln -sf "$(basename "${TARGET_FILE}").sha256" latest_base.tar.gz.sha256
+
+log_msg "SUCCESS" "Base backup created: $(basename "${TARGET_FILE}")"
+log_msg "SUCCESS" "SHA-256 Checksum: $(awk '{print $1}' latest_base.tar.gz.sha256)"

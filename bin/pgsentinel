@@ -1,0 +1,59 @@
+#!/bin/bash
+set -eo pipefail
+
+BASE_DIR="$HOME/pgSentinel"
+
+show_banner() {
+    clear
+    echo "=========================================================="
+    echo "          pgSentinel - Enterprise Health & PITR Engine    "
+    echo "=========================================================="
+    echo ""
+}
+
+show_status() {
+    show_banner
+    echo ">>> Cluster Status:"
+    pg_lsclusters
+    echo ""
+    echo ">>> Archiver Telemetry:"
+    sudo -u postgres psql -x -c "SELECT archived_count, last_archived_wal, last_archived_time, failed_count FROM pg_stat_archiver;"
+    echo ""
+    echo ">>> Active WAL Segments in Storage:"
+    ls -lh "${BASE_DIR}/archive/wal" | tail -n 5
+    echo ""
+    echo ">>> Base Backups on Disk:"
+    ls -lh "${BASE_DIR}/backups/base" | grep "\.tar\.gz$" || echo "None found."
+}
+
+show_health() {
+    show_banner
+    echo ">>> Database Connections & Long-Running Queries:"
+    sudo -u postgres psql -c "
+        SELECT pid, usename, client_addr, state, query_start, query 
+        FROM pg_stat_activity 
+        WHERE pid <> pg_backend_pid() 
+        LIMIT 5;"
+    echo ""
+    echo ">>> Disk Usage (Archive & Data):"
+    df -h /var/lib/postgresql /home
+}
+
+case "$1" in
+    status)
+        show_status
+        ;;
+    health)
+        show_health
+        ;;
+    backup)
+        "${BASE_DIR}/bin/sentinel-backup"
+        ;;
+    pitr)
+        "${BASE_DIR}/bin/sentinel-pitr" "$2"
+        ;;
+    *)
+        echo "Usage: pgsentinel {status|health|backup|pitr <timestamp>}"
+        exit 1
+        ;;
+esac
